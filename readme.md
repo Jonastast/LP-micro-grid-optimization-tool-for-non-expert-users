@@ -32,6 +32,7 @@ The model performs an **hourly optimization** over a full year (or sub-year) and
 ---
 
 ## Repository Structure
+.
 ├── main.py # Main orchestration script
 ├── model.py # Linear optimization model
 ├── data_io.py # Data loading and preprocessing
