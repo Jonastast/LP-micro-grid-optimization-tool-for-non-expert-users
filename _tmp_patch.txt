@@ -1,0 +1,88 @@
+*** Begin Patch
+*** Update File: main27.py
+@@
+-    # Annualization scale for grid terms if simulating sub-year or leap year
+-    annual_scale = 8760.0 / float(T)
++    # Annualization scale for grid terms if simulating sub-year or leap year
++    annual_scale = 8760.0 / float(T)
++
++    # Guard against unbounded export arbitrage if PV has no cap and export has positive credit
++    c_exp_eff = grid["export_price"]
++    if cfg["pv"].get("area_m2") is None and c_exp_eff and float(c_exp_eff) > 0:
++        print("Note: No PV area cap set and export price > 0. Setting export credit to 0 to avoid unbounded sizing.")
++        c_exp_eff = 0.0
+@@
+-        c_exp=grid["export_price"],
++        c_exp=c_exp_eff,
+         annual_scale=annual_scale,
+         eta=eta_eff,
+         A_roof=cfg["pv"]["area_m2"],
+         eta_pv=cfg["pv"]["kw_per_m2"],
+         P_w_max=cfg["wind"]["p_max_kw"],
+@@
+-    print(f"Status: {res['status']}")
+-    print(f"PV: {res['P_pv']:.1f} kW | Wind: {res['P_w']:.1f} kW | Battery: {res['Battery']:.1f} kWh | Cost: ?'?{res['Cost']:,.0f}")
+-    print("Energy kWh (period):")
+-    print("  PV gen:", round(E["pv_gen"], 1))
+-    print("  Wind gen:", round(E["wind_gen"], 1))
+-    print("  Charge:", round(E["charge"], 1), "| Discharge:", round(E["discharge"], 1))
+-    print("  Load:", round(E["load"], 1), "| Spill:", round(E["spill"], 1))
++    print(f"Status: {res['status']}")
++    print(f"PV: {res['P_pv']:.1f} kW | Wind: {res['P_w']:.1f} kW | Battery: {res['Battery']:.1f} kWh | Inverter: {res.get('Inverter', 0.0):.1f} kW")
++    # Cost breakdown (annualized, €/year)
++    Ppv_v = res['P_pv']; Pw_v = res['P_w']; B_v = res['Battery']; Pinv_v = res.get('Inverter', 0.0)
++    ann_capex = ac_pv*Ppv_v + ac_w*Pw_v + ac_b*B_v + ac_inv*Pinv_v
++    gimp = res.get('grid_import_profile')
++    gexp = res.get('grid_export_profile')
++    ann_grid = annual_scale * (
++        (grid["import_cost"] * float(np.sum(gimp))) - (float(c_exp_eff) * float(np.sum(gexp)))
++    ) if gimp is not None and gexp is not None else float('nan')
++    ann_total = ann_capex + (ann_grid if isinstance(ann_grid, float) else 0.0)
++    print("Annualized cost (EUR/year):")
++    print(f"  PV: {ann_capex - (ac_w*Pw_v + ac_b*B_v + ac_inv*Pinv_v):,.0f} | Wind: {ac_w*Pw_v:,.0f} | Battery: {ac_b*B_v:,.0f} | Inverter: {ac_inv*Pinv_v:,.0f}")
++    if gimp is not None:
++        print(f"  Grid net: {ann_grid:,.0f} (imp {grid['import_cost']}€/kWh, exp {c_exp_eff}€/kWh, scaled {annual_scale:.3f}x)")
++    print(f"  Total annualized: {ann_total:,.0f}")
++
++    print("Energy kWh (period):")
++    print("  PV gen:", round(E["pv_gen"], 1))
++    print("  Wind gen:", round(E["wind_gen"], 1))
++    print("  Charge:", round(E["charge"], 1), "| Discharge:", round(E["discharge"], 1))
++    print("  Load:", round(E["load"], 1), "| Spill:", round(E["spill"], 1))
++
++    # Plot a 1-week preview of dispatch
++    try:
++        import matplotlib.pyplot as plt
++        H = min(168, T)
++        t = np.arange(H)
++        pv_gen = res['pv_gen_profile'][:H]
++        w_gen  = res['wind_gen_profile'][:H]
++        soc    = res['soc_profile'][:H]
++        gimp_h = res.get('grid_import_profile')
++        gexp_h = res.get('grid_export_profile')
++        gimp_h = gimp_h[:H] if gimp_h is not None else np.zeros(H)
++        gexp_h = gexp_h[:H] if gexp_h is not None else np.zeros(H)
++
++        fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
++        ax = axes[0]
++        ax.plot(t, load[:H], label='Load', color='k')
++        ax.plot(t, pv_gen, label='PV gen')
++        ax.plot(t, w_gen, label='Wind gen')
++        ax.plot(t, gimp_h, label='Grid import')
++        ax.plot(t, gexp_h, label='Grid export')
++        ax.set_ylabel('kWh per hour')
++        ax.legend(ncol=3)
++
++        ax2 = axes[1]
++        ax2.plot(t, soc, label='SOC', color='tab:green')
++        ax2.set_ylabel('Battery kWh')
++        ax2.set_xlabel('Hour')
++        ax2.legend()
++
++        plt.tight_layout()
++        out_path = 'dispatch_preview.png'
++        plt.savefig(out_path, dpi=150)
++        print(f"Saved plot: {out_path}")
++    except Exception as e:
++        print(f"Plotting skipped: {e}")
+*** End Patch

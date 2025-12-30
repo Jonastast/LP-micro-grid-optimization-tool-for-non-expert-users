@@ -1,0 +1,145 @@
+site:
+  latitude: 56.1496
+  longitude: 10.2134
+  timezone: Europe/Copenhagen
+  year: 2019
+
+load:
+  csv_path: data/1MW_data_midrise_appartment_balitmore.csv
+  column: load_kWh
+  target_annual_mwh: 900  # 4.5MWh/year for 200 houses
+
+ev:
+  enabled: true
+  vehicles: 200               # number of EVs to include when enabled
+  csv_path: data/EV_profile_yearly.csv
+  column: null              # optional: specify column name; defaults to first non-timestamp column
+
+pv:
+  tilt_deg: 35
+  azimuth_deg: 0
+  system_losses_pct: 10
+  area_m2: Null
+  kw_per_m2: 0.22
+  life_PV: 25
+
+wind:
+  hub_height_m: 80
+  turbine: Vestas V90 2000
+  p_max_kw: Null
+  years: [2019] #[2015, 2016, 2017, 2018, 2019, 2020] #[2019]   # can be single int or list of years
+  life_wind: 25
+  losses_pct: 10
+
+battery:
+  eta_roundtrip: 0.95
+  soc_min_frac: 0.00
+  soc_max_frac: 1
+  min_autonomy_hours: 0
+  p_ch_max_kw: 1e9 #auto
+  p_dis_max_kw: 1e9
+  spill_penalty: 0.001 #
+  cycle_penalty: 0.001
+  
+costs:
+  pv_kw: 718 #430.8 #-40% pv in 2035 from 718 euro/kW in 2024
+  wind_kw: 1526 #1220.8 #-20% wind in 2035 from 1526 euro/kW in 2024
+  battery_kwh: 267 #133.5 #-50% battery in 2035 from 267 euro/kWh in 2024
+
+grid:
+  # --- hourly inputs (already in EUR/kWh) ---
+  year: 2024 #the year of the spot price data 
+  spot_price_csv: "data/grid_spotpriceeur.csv"
+  spot_price_column: "SpotPrice_EUR_kWh"      # <-- whatever your column is called
+  spot_price_time_col: "HourUTC"
+
+  transport_price_csv: "data/konstant_hourly_tariffs_2025.csv"
+  transport_price_column: "Tariff_EUR_kWh"  # column with KONSTANT network tariff
+  transport_price_time_col: "Datetime"
+
+  # --- national tariffs + tax (DKK/kWh) – CONFIGURABLE ---
+  transmission_nettariff_dkk_per_kwh: 0.061
+  transmission_systemtariff_dkk_per_kwh: 0.074
+  electricity_tax_dkk_per_kwh: 0.72
+
+  # --- currency + VAT ("moms") ---
+  dkk_per_eur: 7.45      # Convert DKK to EURO rate
+  vat_pct: 0.25          # 25% moms
+
+  # --- fixed yearly subscriptions (DKK/year, optional) ---
+  subscriptions_dkk:
+    energinet: 187
+    konstant: 348.8
+    norlys: 348
+
+  # existing stuff you already have:
+  export_enabled: true
+  export_price: 0.0
+  max_grid_percent: 0 # disable grid if <= 0
+  # import_cost can stay as a fallback flat price if you like
+
+run: #output csv with results 
+  name: "S1_islanded"   # <-- you choose this
+  out_dir: "results"
+  gzip_timeseries: true
+  append_summary: true
+  add_tech_suffix: true              # auto makes ..._district / ..._ashp / etc when looping
+
+
+simulation:
+#  month: 1        # 1..12, or omit for full year
+  annualize: true # also print annualized metrics for comparison
+
+economics:
+  project_life_years: 25
+  real_discount_rate: 0.05     # after inflation
+  inflation_rate: 0.021         # only needed if you want nominal calcs (optional)
+
+o_and_m:                        # annual O&M as fraction of initial capex
+  pv_pct: 0.0266     # 2.66%/yr
+  wind_pct: 0.0267     # 2.67%/yr
+  battery_pct: 0.015  # 1.5%/yr
+
+heating:
+  enabled: true
+
+  space:
+    csv_path: data/space_heating_1MW.csv
+    column: load_kWh      # column name in CSV
+    capacity_mwh: 3466.66 #16.66*200    10.4 MWh/house (csv is stupidly 0.6 instead of 1)
+
+  water:
+    csv_path: data/water_heating_1MW.csv
+    column: load_kWh
+    capacity_mwh: 1500 #7,5 * 200       3MWh/house (csv is stupidly 0.4 instead of 1)
+
+  techs:
+    gshp:
+      enabled: true
+      cop: 3.9
+      capex_per_kwth: 1988       # €/kWth
+      lifetime_years: 20
+      om_pct: 0.02
+
+    ashp:
+      enabled: true
+      cop: 3.35
+      capex_per_kwth: 1343       # €/kWth
+      lifetime_years: 15
+      om_pct: 0.02
+
+    electric:
+      enabled: true
+      cop: 1.0                   # 1 kWh el -> 1 kWh heat
+      capex_per_kwth: 50
+      lifetime_years: 15
+      om_pct: 0.01
+
+    district:
+      enabled: true
+      variable_tariff_eur_per_kwh: 0.124   # €/kWh
+      capex_per_kwth: 300          # €/kWth
+      lifetime_years: 25
+      om_pct: 0.01
+      connection_fixed_annual: 1500
+

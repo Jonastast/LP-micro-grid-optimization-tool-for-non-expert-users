@@ -1,0 +1,122 @@
+# main27.py (minimal orchestration)
+import pandas as pd
+import numpy as np
+from settings import load_config, resolve_battery_power_caps, get_ninja_token
+from data_io import fetch_pvgis_pv_1kw, fetch_ninja_wind, scale_load_profile_annual
+from model import optimize_hourly
+from datetime import datetime
+
+# Economics helpers (annualize unit costs with replacements + O&M)
+def crf(r, n):
+    return (r * (1 + r) ** n) / ((1 + r) ** n - 1) if r > 0 else 1.0 / n
+
+def annualized_unit_cost(c0, r, N, life, om_pct):
+    # initial capex annualized
+    annual = c0 * crf(r, N)
+    # replacements (same cost) at years life, 2*life, ...
+    repl_years = range(life, N + 1, life) if life and life < N else []
+    npc_repl = sum(c0 / ((1 + r) ** t) for t in repl_years)
+    annual += npc_repl * crf(r, N)
+    # add annual O&M as % of initial capex
+    annual += om_pct * c0
+    return annual  # €/year per unit
+
+def load_and_scale_csv(path, column, target_annual_mwh):
+    df = pd.read_csv(path)
+    series = pd.Series(df[column].astype(float), name=column)
+    series, sf, orig_mwh = scale_load_profile_annual(series, target_annual_mwh)
+    series = series.clip(lower=0)
+    assert len(series) in (8760, 8784)
+    return series, sf, orig_mwh
+
+def main(cfg_path="config.yaml"):
+    cfg = load_config(cfg_path)
+
+    # Annualized unit costs (€/year per unit)
+    econ = cfg["economics"]; om = cfg["o_and_m"]; inv = cfg["inverter"]; grid = cfg["grid"]
+    N = int(econ["project_life_years"]); r = float(econ["real_discount_rate"])
+
+    ac_pv  = annualized_unit_cost(cfg["costs"]["pv_kw"],       r, N, life=25,                     om_pct=om["pv_pct"])
+    ac_w   = annualized_unit_cost(cfg["costs"]["wind_kw"],     r, N, life=25,                     om_pct=om["wind_pct"])
+    ac_b   = annualized_unit_cost(cfg["costs"]["battery_kwh"], r, N, life=12,                     om_pct=om["battery_pct"])
+    ac_inv = annualized_unit_cost(inv["ac_cost_per_kw"],        r, N, life=inv["lifetime_years"], om_pct=om["inverter_pct"])
+
+    # Load + scale load
+    load_series, sf, orig_mwh = load_and_scale_csv(
+        cfg["load"]["csv_path"],
+        cfg["load"]["column"],
+        cfg["load"]["target_annual_mwh"]
+    )
+    print(f"Load scaled {sf:.3f}× | {orig_mwh:.1f} → {load_series.sum()/1000:.1f} MWh/yr")
+
+    # Fetch PV & Wind (1 kW profiles)
+    site = cfg["site"]
+    pv_series = fetch_pvgis_pv_1kw(
+        site["latitude"], site["longitude"],
+        tilt=cfg["pv"]["tilt_deg"],
+        azim=cfg["pv"]["azimuth_deg"],
+        loss_pct=cfg["pv"]["system_losses_pct"],
+        #year=site["year"],
+        timezone=site["timezone"]
+    )
+    token = get_ninja_token()
+    wind_cfg = cfg["wind"]
+    wind_series = fetch_ninja_wind(
+        site["latitude"], site["longitude"],
+        years=wind_cfg.get("years", site["year"]),
+        turbine=cfg["wind"]["turbine"],
+        token=token,
+        height=cfg["wind"]["hub_height_m"]
+    )
+
+    # Align lengths
+    T = min(len(pv_series), len(wind_series), len(load_series))
+    g_pv = pv_series.values[:T]
+    g_w  = wind_series.values[:T]
+    load = load_series.values[:T]
+    # Annualization scale for grid terms if simulating sub-year or leap year
+    annual_scale = 8760.0 / float(T)
+
+    # Battery power caps (kW as kWh-in-hour)
+    P_ch_max, P_dis_max = resolve_battery_power_caps(cfg, pd.Series(load))
+
+    # Fold inverter efficiency into round-trip
+    eta_eff = float(cfg["battery"]["eta_roundtrip"]) * float(inv.get("roundtrip_eff", 1.0))
+
+    # Run simple LP
+    res = optimize_hourly(
+        load, g_pv, g_w,
+        ac_pv=ac_pv,
+        ac_w=ac_w,
+        ac_b=ac_b,
+        ac_inv=ac_inv,
+        c_imp=grid["import_cost"],
+        c_exp=grid["export_price"],
+        annual_scale=annual_scale,
+        eta=eta_eff,
+        A_roof=cfg["pv"]["area_m2"],
+        eta_pv=cfg["pv"]["kw_per_m2"],
+        P_w_max=cfg["wind"]["p_max_kw"],
+        soc_cycle=True,  # or False for monthly debug runs
+        min_autonomy_hours=cfg["battery"]["min_autonomy_hours"],
+        spill_penalty=cfg["battery"].get("spill_penalty", 0.0),
+        cycle_penalty=cfg["battery"].get("cycle_penalty", 0.0),
+        P_ch_max=P_ch_max,
+        P_dis_max=P_dis_max,
+        soc_min_frac=cfg["battery"]["soc_min_frac"],
+        soc_max_frac=cfg["battery"]["soc_max_frac"],
+    )
+    
+
+    E = res["energy"]
+    print(f"Status: {res['status']}")
+    print(f"PV: {res['P_pv']:.1f} kW | Wind: {res['P_w']:.1f} kW | Battery: {res['Battery']:.1f} kWh | Cost: €{res['Cost']:,.0f}")
+    print("Energy kWh (period):")
+    print("  PV gen:", round(E["pv_gen"], 1))
+    print("  Wind gen:", round(E["wind_gen"], 1))
+    print("  Charge:", round(E["charge"], 1), "| Discharge:", round(E["discharge"], 1))
+    print("  Load:", round(E["load"], 1), "| Spill:", round(E["spill"], 1))
+
+if __name__ == "__main__":
+    main()
+
