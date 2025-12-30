@@ -76,8 +76,9 @@ PuLP will try HiGHS first, then CBC. Installing HiGHS is strongly recommende
 brew install highs
 
 # conda
+```bash
 conda install -c conda-forge highs
-
+```
 Required environment variable (Renewables.ninja)
 
 Set your Renewables.ninja token as: export NINJA_TOKEN="your_token_here"
@@ -87,8 +88,9 @@ Quickstart
 Edit config.yaml to point to your input CSVs and settings
 
 Run:
+```python
 python main.py
-
+```
 main.py reads config.yaml by default.
 
 
