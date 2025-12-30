@@ -59,6 +59,7 @@ conda activate microgrid-opt
 pip install -U pip
 pip install numpy pandas matplotlib pyyaml requests pulp
 
+```
 ### Option B — Pip / venv
 ```bash
 python -m venv .venv
@@ -67,8 +68,10 @@ source .venv/bin/activate  # (Windows: .venv\Scripts\activate)
 pip install -U pip
 pip install numpy pandas matplotlib pyyaml requests pulp
 
+```
 Solver (recommended)
 PuLP will try HiGHS first, then CBC. Installing HiGHS is strongly recommende
+
 # macOS
 brew install highs
 
